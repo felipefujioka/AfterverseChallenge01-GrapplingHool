@@ -1,4 +1,5 @@
-﻿using System.IO.MemoryMappedFiles;
+﻿using System;
+using System.IO.MemoryMappedFiles;
 using DG.Tweening;
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM && STARTER_ASSETS_PACKAGES_CHECKED
@@ -65,7 +66,7 @@ namespace StarterAssets
 		public Transform RightHand;
 		public Rigidbody RigidBody;
 		public LineRenderer LineRenderer;
-		public Rope RopePrefab;
+		public ConfigurableJoint RopePrefab;
 		
 		// cinemachine
 		private float _cinemachineTargetYaw;
@@ -91,6 +92,7 @@ namespace StarterAssets
 		private int _animIDMotionSpeed;
 		private int _animIDHanging;
 		private int _animIDHooked;
+		private int _animIDPirouetting;
 
 		[SerializeField] private Animator _animator;
 		private CharacterController _controller;
@@ -106,9 +108,12 @@ namespace StarterAssets
 
 		public bool Hooked;
 		public bool Hanging;
+		public bool Pirouetting;
 		public bool JustTouchedGround;
 		private Vector3 _hookAnchor;
 		private Vector3 _hookNormal;
+
+		private int _enemyLayer;
 
 		private void Awake()
 		{
@@ -117,6 +122,8 @@ namespace StarterAssets
 			{
 				_mainCamera = GameObject.FindGameObjectWithTag("MainCamera");
 			}
+
+			_enemyLayer = LayerMask.NameToLayer("Enemy");
 		}
 
 		private void Start()
@@ -157,8 +164,7 @@ namespace StarterAssets
 				transform.rotation = transformRotation;
 			}
 			
-			SetSwinging(!Grounded && Hooked);
-			
+			SetApplyGravity(!Grounded && (Hooked || Pirouetting));
 		}
 		
 		private void LateUpdate()
@@ -171,7 +177,7 @@ namespace StarterAssets
 			}
 		}
 
-		private void SetSwinging(bool isSwinging)
+		private void SetApplyGravity(bool isSwinging)
 		{
 			RigidBody.isKinematic = !isSwinging;
 			RigidBody.useGravity = isSwinging;
@@ -194,10 +200,19 @@ namespace StarterAssets
 				_input.jump = false;
 				Hanging = false;
 				Hooked = false;
-				_controller.enabled = true;
 				_animator.SetBool(_animIDHanging, false);
 				_animator.SetBool(_animIDHooked, false);
 				LineRenderer.enabled = false;
+
+				if (!Grounded)
+				{
+					Pirouetting = true;
+					if (_currenJoint != null)
+					{
+						Destroy(_currenJoint.gameObject);	
+					}
+					_animator.SetBool(_animIDPirouetting, Pirouetting);
+				}
 			}
 		}
 
@@ -221,6 +236,7 @@ namespace StarterAssets
 			_animIDMotionSpeed = Animator.StringToHash("MotionSpeed");
 			_animIDHanging = Animator.StringToHash("Hanging");
 			_animIDHooked = Animator.StringToHash("Hooked");
+			_animIDPirouetting = Animator.StringToHash("Pirouetting");
 		}
 
 		private void GroundedCheck()
@@ -231,6 +247,12 @@ namespace StarterAssets
 
 			JustTouchedGround = newValue ^ Grounded;
 			Grounded = newValue;
+
+			if (Grounded)
+			{
+				Pirouetting = false;
+				_animator.SetBool(_animIDPirouetting, Pirouetting);
+			}
 			
 			// update animator if using character
 			if (_hasAnimator)
@@ -421,12 +443,10 @@ namespace StarterAssets
 				_currentTween.Kill(false);
 			}
 
-			var rope = Instantiate(RopePrefab);
-			ConfigurableJoint originJoint = rope.OriginJoint;
-			ConfigurableJoint handJoint = rope.HandJoint;
+			var originJoint = Instantiate(RopePrefab); ;
+			originJoint.connectedBody = RigidBody;
 			originJoint.transform.position = hitPoint;
-			handJoint.connectedBody = RigidBody;
-			handJoint.transform.position = RightHand.position;
+			originJoint.connectedAnchor = new Vector3(0, 2.5f,0);
 
 			var ropeDirection = hitPoint - RightHand.position;
 			var axis = Vector3.Cross(ropeDirection, hitNormal);
@@ -443,14 +463,15 @@ namespace StarterAssets
 
 			_currenJoint = originJoint;
 			Hooked = true;
-			Hanging = false;
 			_hookAnchor = hitPoint;
 			_hookNormal = hitNormal;
 
-			_controller.enabled = false;
+			_controller.enabled = Grounded;
 			
-			_animator.SetBool(_animIDHooked, true);
-			_animator.SetBool(_animIDHanging, false);
+			_animator.SetBool(_animIDHooked, Hooked);
+
+			Pirouetting = false;
+			_animator.SetBool(_animIDPirouetting, Pirouetting);
 		}
 
 		private bool IsParallel(Vector3 a, Vector3 b)
@@ -509,6 +530,17 @@ namespace StarterAssets
 				var lookAt = _hookAnchor;
 				lookAt.y = transform.position.y;
 				transform.LookAt(lookAt);
+				Hanging = false;
+			}
+		}
+
+		private void OnTriggerEnter(Collider other)
+		{
+			if (other.gameObject.layer == _enemyLayer)
+			{
+				Destroy(other.gameObject);
+
+				FindObjectOfType<GameController>().FinishGame(true);
 			}
 		}
 	}
